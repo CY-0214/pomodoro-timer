@@ -31,7 +31,7 @@ No installation required — just download and run!
 
 ## 🎮 Usage
 
-1. Download `PomodoroTimer.exe` from the [Releases](https://github.com/YOUR_USERNAME/pomodoro-timer/releases) page
+1. Download `PomodoroTimer.exe` from the [Releases](https://github.com/CY-0214/pomodoro-timer/releases) page
 2. Double-click to run
 3. Click **Start** to begin a pomodoro session
 4. The timer will auto-cycle through work and breaks
@@ -90,6 +90,34 @@ pomodoro-timer/
 
 MIT License — free to use, modify, and distribute.
 
-## ⚠️ Antivirus Note
+## ⚠️ Windows Defender / Antivirus
 
-Windows Defender or antivirus software may flag the EXE as suspicious. This is a **false positive** caused by PyInstaller bundling. The code is open source — you can verify it yourself. Click "Run anyway" to use the app.
+When you first run `PomodoroTimer.exe`, Windows Defender Smartscreen shows a warning because the EXE is **unsigned** (no code signing certificate).
+
+This is a **false positive** — the app is open source and safe.
+
+### Option 1 — Click "Run anyway"
+On the warning screen, click **"More info"** then **"Run anyway"**. This only appears once.
+
+### Option 2 — Add Windows Defender exclusion (recommended)
+
+Run this command in **PowerShell as Administrator**:
+
+```powershell
+Add-MpPreference -ExclusionPath "D:\Lim CY\Downloads\cc test\dist9\PomodoroTimer.exe"
+```
+
+Replace the path with wherever you saved the EXE. After this, no more warnings.
+
+### Option 3 — Add exclusion via Windows Security GUI
+
+1. Open **Windows Security**
+2. Go to **Virus & threat protection**
+3. Click **Manage settings**
+4. Scroll down to **Exclusions** → Click **Add or remove exclusions**
+5. Click **Add an exclusion** → **File**
+6. Select `PomodoroTimer.exe`
+
+### Option 4 — Unblock the file
+
+Right-click `PomodoroTimer.exe` → **Properties** → Check **"Unblock"** at the bottom → Click **OK**
