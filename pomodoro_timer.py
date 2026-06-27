@@ -153,19 +153,18 @@ class PomodoroApp:
     def _set_taskbar_icon(self):
         """Set the taskbar icon from the bundled resource."""
         try:
-            # Get path to bundled resource (works with PyInstaller --onefile)
             if getattr(sys, 'frozen', False):
                 base = sys._MEIPASS
             else:
                 base = os.path.dirname(os.path.abspath(__file__))
             icon_path = os.path.join(base, "icon_256.png")
             if os.path.exists(icon_path):
-                from PIL import Image
-                img = Image.open(icon_path)
-                # Tkinter needs a PhotoImage
                 import tkinter as tk
-                photo = tk.PhotoImage(file=icon_path)
+                from PIL import Image, ImageTk
+                img = Image.open(icon_path)
+                photo = ImageTk.PhotoImage(img)
                 self.root.iconphoto(True, photo)
+                self._icon_photo = photo  # prevent garbage collection
         except:
             pass
 
@@ -573,13 +572,18 @@ class PomodoroApp:
         def run_tray():
             try:
                 import pystray
-                from PIL import Image, ImageDraw
-                img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-                draw = ImageDraw.Draw(img)
-                cx, cy, r = 32, 32, 28
-                draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=(255,255,255,255))
-                draw.ellipse([cx-int(r*0.85), cy-int(r*0.15), cx+int(r*0.85), cy+r], fill=(255,77,77,255))
-                draw.ellipse([cx-int(r*0.65), cy-int(r*0.55), cx+int(r*0.65), cy+int(r*0.15)], fill=(255,255,255,255))
+                from PIL import Image
+
+                # Load icon from resource
+                if getattr(sys, 'frozen', False):
+                    base = sys._MEIPASS
+                else:
+                    base = os.path.dirname(os.path.abspath(__file__))
+                icon_path = os.path.join(base, "icon_256.png")
+                if os.path.exists(icon_path):
+                    img = Image.open(icon_path).resize((64, 64), Image.LANCZOS)
+                else:
+                    img = Image.new("RGBA", (64, 64), (255, 0, 0, 255))
 
                 def show_window():
                     self.root.after(0, lambda: (self.root.deiconify(), self.root.lift()))
