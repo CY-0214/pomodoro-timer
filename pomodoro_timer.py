@@ -628,8 +628,11 @@ class PomodoroApp:
 
                 threading.Thread(target=tooltip_loop, daemon=True).start()
                 self._tray_icon.run()
-            except:
-                pass
+            except Exception as e:
+                # Log errors to a file for debugging
+                with open(os.path.join(tempfile.gettempdir(), "pomodoro_tray_error.txt"), "w") as f:
+                    import traceback
+                    f.write(traceback.format_exc())
 
         threading.Thread(target=run_tray, daemon=True).start()
 
