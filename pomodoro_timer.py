@@ -11,6 +11,23 @@ import math
 import tempfile
 import json
 import wave
+import traceback
+from datetime import datetime
+
+# ─── Logging ────────────────────────────────────────────────────────
+_LOG_FILE = os.path.join(os.path.expanduser("~"), "pomodoro_log.txt")
+
+def _log(msg):
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except:
+        pass
+
+def _log_error(msg):
+    _log(f"ERROR: {msg}")
+    _log(traceback.format_exc())
 
 # ─── Sound synthesis ──────────────────────────────────────────────
 
@@ -112,46 +129,85 @@ def _notify(title,msg):
 
 class PomodoroApp:
     def __init__(self):
-        import tkinter as tk
+        try:
+            _log("=== Pomodoro Timer Starting ===")
+            _log(f"Frozen: {getattr(sys, 'frozen', False)}")
+            if getattr(sys, 'frozen', False):
+                _log(f"_MEIPASS: {getattr(sys, '_MEIPASS', 'N/A')}")
 
-        self.root = tk.Tk()
-        self.root.title("Pomodoro Timer")
-        self.root.geometry("370x480")
-        self.root.resizable(False, False)
-        self.root.configure(bg="#1a1a2e")
+            import tkinter as tk
+            from PIL import Image, ImageTk
 
-        # State
-        self.durations = {"pomodoro": 25, "shortBreak": 5, "longBreak": 15}
-        self.goal = 4
-        self.mode = "pomodoro"
-        self.time_left = 25 * 60
-        self.total_time = self.time_left
-        self.running = False
-        self.completed = 0
-        self.timer_id = None
-        self.overlay_visible = False
+            self.root = tk.Tk()
+            self.root.title("Pomodoro Timer")
+            self.root.geometry("370x480")
+            self.root.resizable(False, False)
+            self.root.configure(bg="#a8d8ea")
+            _log("Main window created")
 
-        self.COLORS = {"pomodoro": "#ff6b6b", "shortBreak": "#2ecc71", "longBreak": "#5dade2"}
-        self.LABELS = {"pomodoro": "Pomodoro Session", "shortBreak": "Short Break", "longBreak": "Long Break"}
+            # Background image — stored here, drawn on canvas in _build_ui
+            self._bg_photo = None
+            self._bg_pil   = None
+            self._pulse_val = 0.0
+            self._pulse_dir = 1
+            self._pulse_id  = None
+            self._pill_hovered = None
+            self._settings_visible = False
+            self._settings_anim_y  = -300
+            self._settings_anim_id = None
+            try:
+                if getattr(sys, 'frozen', False):
+                    _bg_base = sys._MEIPASS
+                else:
+                    _bg_base = os.path.dirname(os.path.abspath(__file__))
+                _bg_path = os.path.join(_bg_base, "background.png")
+                if os.path.exists(_bg_path):
+                    _bg_img = Image.open(_bg_path).resize((370, 480), Image.LANCZOS)
+                    self._bg_pil   = _bg_img          # raw PIL — composited in _build_ui
+                    self._bg_photo = ImageTk.PhotoImage(_bg_img)
+                    _log("Background image loaded")
+                else:
+                    _log("Background.png not found")
+            except Exception as e:
+                _log_error(f"Background load failed: {e}")
 
-        # UI
-        self._build_ui()
-        self._update_display()
-        self._update_progress()
-        self._update_color()
+            # State
+            self.durations = {"pomodoro": 25, "shortBreak": 5, "longBreak": 15}
+            self.goal = 4
+            self.mode = "pomodoro"
+            self.time_left = 25 * 60
+            self.total_time = self.time_left
+            self.running = False
+            self.completed = 0
+            self.timer_id = None
+            self.overlay_visible = False
 
-        # System tray
-        self._tray_icon = None
-        self._start_tray()
+            self.COLORS = {"pomodoro": "#e04545", "shortBreak": "#18a84a", "longBreak": "#2b7fd4"}
+            self.LABELS = {"pomodoro": "Pomodoro Session", "shortBreak": "Short Break", "longBreak": "Long Break"}
+            self.OVERLAY_LABELS = {"pomodoro": "Work", "shortBreak": "Short", "longBreak": "Long"}
 
-        # Handle close
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+            # UI
+            self._build_ui()
+            self._update_display()
+            self._update_progress()
+            self._update_color()
+            _log("UI built")
 
-        # Set taskbar icon
-        self._set_taskbar_icon()
+            # System tray
+            self._tray_icon = None
+            self._start_tray()
+
+            # Handle close
+            self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+            # Set taskbar icon
+            self._set_taskbar_icon()
+            _log("Init complete")
+        except Exception as e:
+            _log_error(f"Init failed: {e}")
+            raise
 
     def _set_taskbar_icon(self):
-        """Set the taskbar icon from the bundled resource."""
         try:
             if getattr(sys, 'frozen', False):
                 base = sys._MEIPASS
@@ -159,115 +215,313 @@ class PomodoroApp:
                 base = os.path.dirname(os.path.abspath(__file__))
             icon_path = os.path.join(base, "icon_256.png")
             if os.path.exists(icon_path):
-                import tkinter as tk
-                from PIL import Image, ImageTk
                 img = Image.open(icon_path)
                 photo = ImageTk.PhotoImage(img)
                 self.root.iconphoto(True, photo)
-                self._icon_photo = photo  # prevent garbage collection
+                self._icon_photo = photo
         except:
             pass
 
+
+    # ─── Colour helpers ────────────────────────────────────────────────
+    def _hex_rgb(self, h):
+        h = h.lstrip('#')
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+    def _rgb_hex(self, r, g, b):
+        return f'#{int(max(0,min(255,r))):02x}{int(max(0,min(255,g))):02x}{int(max(0,min(255,b))):02x}'
+
+    def _darken(self, col, f=0.82):
+        r, g, b = self._hex_rgb(col)
+        return self._rgb_hex(r*f, g*f, b*f)
+
+    def _lighten(self, col, f=1.28):
+        r, g, b = self._hex_rgb(col)
+        return self._rgb_hex(r*f, g*f, b*f)
+
+    def _blend(self, c1, c2, t):
+        r1,g1,b1 = self._hex_rgb(c1); r2,g2,b2 = self._hex_rgb(c2)
+        return self._rgb_hex(r1+(r2-r1)*t, g1+(g2-g1)*t, b1+(b2-b1)*t)
+
+    # ─── Pill-button helpers (feature 2) ───────────────────────────────
+    def _pill_hover(self, mode, entering):
+        self._pill_hovered = mode if entering else None
+        self._redraw_pill(mode)
+
+    def _redraw_pill(self, mode):
+        c = self.mode_buttons.get(mode)
+        if c is None:
+            return
+        w = int(c['width']); h = int(c['height']); r = h // 2
+        c.delete("all")
+        is_active  = (mode == self.mode)
+        is_hovered = (self._pill_hovered == mode)
+        lbl = {"pomodoro": "Pomodoro", "shortBreak": "Short Break",
+               "longBreak": "Long Break"}[mode]
+        if is_active:
+            fill = self._lighten(self.COLORS[mode], 1.08) if is_hovered else self.COLORS[mode]
+            tc, fw, oc = "white", "bold", fill
+        else:
+            fill = "#c0dff0" if is_hovered else getattr(self, '_CARD', "#edf7fc")
+            tc, fw, oc = "#2c3e50", "normal", "#7db5cc"
+        # Left arc
+        c.create_arc(0, 1, 2*r, h-1, start=90, extent=180, fill=fill, outline=oc, width=1)
+        # Right arc
+        c.create_arc(w-2*r, 1, w, h-1, start=270, extent=180, fill=fill, outline=oc, width=1)
+        # Middle rect
+        c.create_rectangle(r, 1, w-r, h-1, fill=fill, outline=fill)
+        if not is_active:
+            c.create_line(r, 1, w-r, 1, fill=oc); c.create_line(r, h-1, w-r, h-1, fill=oc)
+        c.create_text(w//2, h//2+1, text=lbl, font=("Segoe UI", 9, fw), fill=tc)
+
+    # ─── Button hover helper (feature 5) ───────────────────────────────
+    def _add_hover(self, btn, base_color):
+        dark = self._darken(base_color, 0.82)
+        btn.bind("<Enter>", lambda e: btn.config(bg=dark))
+        btn.bind("<Leave>", lambda e: btn.config(bg=base_color))
+
+    # ─── Pulse animation (feature 6) ───────────────────────────────────
+    def _start_pulse(self):
+        self._stop_pulse()
+        self._pulse_val = 0.0; self._pulse_dir = 1
+        self._do_pulse()
+
+    def _stop_pulse(self):
+        if self._pulse_id:
+            try: self.root.after_cancel(self._pulse_id)
+            except: pass
+            self._pulse_id = None
+        self._pulse_val = 0.0
+
+    def _do_pulse(self):
+        if not self.running:
+            self._pulse_val = 0.0; return
+        self._pulse_val += 0.045 * self._pulse_dir
+        if   self._pulse_val >= 1.0: self._pulse_val = 1.0; self._pulse_dir = -1
+        elif self._pulse_val <= 0.0: self._pulse_val = 0.0; self._pulse_dir =  1
+        self._update_progress()
+        self._pulse_id = self.root.after(50, self._do_pulse)
+
+    # ─── Settings slide animation (feature 10) ─────────────────────────
+    def _slide_in_settings(self):
+        self._settings_visible = True
+        self._settings_anim_y = -300
+        self._settings_shadow.place(x=13, y=-296, width=350, height=10)
+        self._settings_shadow.lift()
+        self.settings_frame.place(x=10, y=self._settings_anim_y, width=350)
+        self.settings_frame.lift()
+        self._animate_slide(target=42, speed=26)
+
+    def _slide_out_settings(self):
+        self._settings_visible = False
+        self._animate_slide(target=-300, speed=28,
+                            on_done=lambda: (
+                                self.settings_frame.place_forget(),
+                                self._settings_shadow.place_forget()))
+
+    def _animate_slide(self, target, speed, on_done=None):
+        if self._settings_anim_id:
+            try: self.root.after_cancel(self._settings_anim_id)
+            except: pass
+            self._settings_anim_id = None
+        def step():
+            cur = self._settings_anim_y
+            new = cur + speed if target > cur else cur - speed
+            new = max(min(new, max(cur, target)), min(cur, target))
+            self._settings_anim_y = new
+            try:
+                self.settings_frame.place(x=10, y=new, width=350)
+                sh = max(self.settings_frame.winfo_reqheight(), 20)
+                self._settings_shadow.place(x=13, y=new+4, width=350, height=sh)
+                self._settings_shadow.lower(self.settings_frame)
+            except: return
+            if new != target:
+                self._settings_anim_id = self.root.after(14, step)
+            else:
+                self._settings_anim_id = None
+                if on_done: on_done()
+        step()
+
     def _build_ui(self):
         import tkinter as tk
+        from PIL import Image, ImageDraw, ImageTk
 
-        # Top bar
-        top_frame = tk.Frame(self.root, bg="#1a1a2e")
-        top_frame.pack(fill="x", padx=10, pady=(10, 0))
+        W, H   = 370, 480
+        CARD   = "#edf7fc"
+        SBG    = "#ddeef7"
+        SFG    = "#2c3e50"
+        SBTN   = "#b8d4e3"
+        CX1, CY1, CX2, CY2 = 45, 50, 325, 445
+        R      = 14          # corner radius
+        self._CARD = CARD
 
-        # Settings button
-        self.settings_btn = tk.Label(top_frame, text="⚙", font=("Segoe UI", 14), bg="#1a1a2e", fg="#888", cursor="hand2")
-        self.settings_btn.pack(side="left")
-        self.settings_btn.bind("<Button-1>", self._toggle_settings)
-        self.settings_btn.bind("<Enter>", lambda e: self.settings_btn.config(fg="#fff"))
-        self.settings_btn.bind("<Leave>", lambda e: self.settings_btn.config(fg="#888"))
+        # ── Bake rounded card into background (feature 1) ─────────────
+        base = (self._bg_pil.copy().convert("RGBA") if self._bg_pil is not None
+                else Image.new("RGBA", (W, H), (168, 216, 234, 255)))
+        ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        dr = ImageDraw.Draw(ov)
+        # Shadow
+        dr.rounded_rectangle([CX1+4, CY1+4, CX2+4, CY2+4], radius=R,
+                              fill=(80, 140, 175, 90))
+        # Card face
+        dr.rounded_rectangle([CX1, CY1, CX2, CY2], radius=R,
+                              fill=(237, 247, 252, 252),
+                              outline=(180, 220, 235, 200), width=1)
+        self._bg_photo = ImageTk.PhotoImage(Image.alpha_composite(base, ov).convert("RGB"))
 
-        # Settings panel (hidden initially)
-        self.settings_frame = tk.Frame(self.root, bg="#19192d", bd=0)
-        # Don't pack yet - hidden
+        # ── Root canvas ───────────────────────────────────────────────
+        rc = tk.Canvas(self.root, width=W, height=H, highlightthickness=0, bd=0)
+        rc.pack(fill="both", expand=True)
+        self._rc = rc
+        rc.create_image(0, 0, anchor="nw", image=self._bg_photo)
 
-        tk.Label(self.settings_frame, text="⏱ Durations (min)", font=("Segoe UI", 10, "bold"), bg="#19192d", fg="#fff").pack(anchor="w", pady=(8, 6), padx=8)
+        # Gear icon — no bg box (drawn directly on canvas)
+        rc.create_text(28, 28, text="⚙", font=("Segoe UI", 14),
+                       fill="#3a4d5c", anchor="center", tags="gear")
+        rc.tag_bind("gear", "<Button-1>", self._toggle_settings)
+        rc.tag_bind("gear", "<Enter>",
+                    lambda e: rc.itemconfig("gear", fill="#1a2a3a"))
+        rc.tag_bind("gear", "<Leave>",
+                    lambda e: rc.itemconfig("gear", fill="#3a4d5c"))
 
+        # ── Settings panel (slide-in overlay) ─────────────────────────
+        # Shadow backing — shown behind settings_frame during slide
+        self._settings_shadow = tk.Frame(self.root, bg="#7aaec8",
+                                         bd=0, highlightthickness=0)
+        self.settings_frame = tk.Frame(self.root, bg=SBG, bd=0,
+                                       highlightthickness=2,
+                                       highlightbackground="#5a9ebd")
+        tk.Label(self.settings_frame, text="⏱ Durations (min)",
+                 font=("Segoe UI", 10, "bold"), bg=SBG, fg=SFG
+                 ).pack(anchor="w", pady=(8, 6), padx=10)
         self.s_vars = {}
-        for key, label, default in [("pomodoro", "Pomodoro:", 25), ("shortBreak", "Short Break:", 5), ("longBreak", "Long Break:", 15)]:
-            row = tk.Frame(self.settings_frame, bg="#19192d")
-            row.pack(fill="x", padx=8, pady=2)
-            tk.Label(row, text=label, font=("Segoe UI", 9), bg="#19192d", fg="#999", width=14, anchor="w").pack(side="left")
+        for key, lbl, default in [("pomodoro", "Pomodoro:", 25),
+                                   ("shortBreak", "Short Break:", 5),
+                                   ("longBreak", "Long Break:", 15)]:
+            row = tk.Frame(self.settings_frame, bg=SBG)
+            row.pack(fill="x", padx=10, pady=2)
+            tk.Label(row, text=lbl, font=("Segoe UI", 9), bg=SBG,
+                     fg="#3d5060", width=14, anchor="w").pack(side="left")
             var = tk.StringVar(value=str(default))
-            entry = tk.Entry(row, textvariable=var, width=6, font=("Segoe UI", 9), bg="#2a2a3e", fg="#fff", insertbackground="#fff", relief="flat", justify="center")
-            entry.pack(side="left")
+            tk.Entry(row, textvariable=var, width=6, font=("Segoe UI", 9),
+                     bg=SBTN, fg=SFG, insertbackground=SFG,
+                     relief="flat", justify="center").pack(side="left")
             self.s_vars[key] = var
-
-        # Cycles
-        row = tk.Frame(self.settings_frame, bg="#19192d")
-        row.pack(fill="x", padx=8, pady=2)
-        tk.Label(row, text="Cycles:", font=("Segoe UI", 9), bg="#19192d", fg="#999", width=14, anchor="w").pack(side="left")
+        row = tk.Frame(self.settings_frame, bg=SBG)
+        row.pack(fill="x", padx=10, pady=2)
+        tk.Label(row, text="Cycles:", font=("Segoe UI", 9), bg=SBG,
+                 fg="#3d5060", width=14, anchor="w").pack(side="left")
         self.s_cycle_var = tk.StringVar(value="4")
-        entry = tk.Entry(row, textvariable=self.s_cycle_var, width=6, font=("Segoe UI", 9), bg="#2a2a3e", fg="#fff", insertbackground="#fff", relief="flat", justify="center")
-        entry.pack(side="left")
+        tk.Entry(row, textvariable=self.s_cycle_var, width=6,
+                 font=("Segoe UI", 9), bg=SBTN, fg=SFG,
+                 insertbackground=SFG, relief="flat",
+                 justify="center").pack(side="left")
         self.s_vars["cycle"] = self.s_cycle_var
-
-        # Overlay toggle in settings
-        overlay_row = tk.Frame(self.settings_frame, bg="#19192d")
-        overlay_row.pack(fill="x", padx=8, pady=(10, 2))
-        self.overlay_toggle_btn = tk.Button(overlay_row, text="Show Overlay", font=("Segoe UI", 9, "bold"), bg="#4ecdc4", fg="#1a1a2e", relief="flat", cursor="hand2", command=self._toggle_overlay)
+        overlay_row = tk.Frame(self.settings_frame, bg=SBG)
+        overlay_row.pack(fill="x", padx=10, pady=(10, 2))
+        self.overlay_toggle_btn = tk.Button(
+            overlay_row, text="Show Overlay",
+            font=("Segoe UI", 9, "bold"), bg="#3498db", fg="white",
+            relief="flat", cursor="hand2", command=self._toggle_overlay)
         self.overlay_toggle_btn.pack(fill="x")
-
-        apply_btn = tk.Button(self.settings_frame, text="Apply", font=("Segoe UI", 9, "bold"), bg="#4ecdc4", fg="#1a1a2e", relief="flat", cursor="hand2", command=self._apply_settings)
-        apply_btn.pack(fill="x", padx=8, pady=(8, 8))
-
-        self.s_err = tk.Label(self.settings_frame, text="Durations: 1-120, Cycles: 1-20", font=("Segoe UI", 8), bg="#19192d", fg="#ff6b6b")
+        tk.Button(self.settings_frame, text="Apply",
+                  font=("Segoe UI", 9, "bold"), bg="#3498db", fg="white",
+                  relief="flat", cursor="hand2",
+                  command=self._apply_settings
+                  ).pack(fill="x", padx=10, pady=(8, 8))
+        self.s_err = tk.Label(self.settings_frame,
+                              text="Durations: 1-120, Cycles: 1-20",
+                              font=("Segoe UI", 8), bg=SBG, fg="#ff6b6b")
         self.s_err.pack_forget()
 
-        # Title
-        self.title_label = tk.Label(self.root, text="🍅 Pomodoro Timer", font=("Segoe UI", 16, "bold"), bg="#1a1a2e", fg="#ff6b6b")
-        self.title_label.pack(pady=(10, 8))
+        # ── Card frame — mode-coloured highlight border (feature 4) ───
+        self._card_frame = tk.Frame(self.root, bg=CARD, bd=0,
+                                    highlightthickness=2,
+                                    highlightbackground="#e04545")
+        self._card_frame.place(x=CX1, y=CY1, width=CX2-CX1, height=CY2-CY1)
+        card = self._card_frame
 
-        # Mode buttons
-        mode_frame = tk.Frame(self.root, bg="#1a1a2e")
+        # ── Title ──────────────────────────────────────────────────────
+        self.title_label = tk.Label(card, text="🍅 Pomodoro Timer",
+                                    font=("Segoe UI", 16, "bold"),
+                                    bg=CARD, fg="#ff6b6b")
+        self.title_label.pack(pady=(14, 6))
+
+        # ── Pill-shaped mode buttons (feature 2) ───────────────────────
+        mode_frame = tk.Frame(card, bg=CARD)
         mode_frame.pack(pady=(0, 10))
         self.mode_buttons = {}
+        pill_w = {"pomodoro": 80, "shortBreak": 90, "longBreak": 86}
         for mode in ["pomodoro", "shortBreak", "longBreak"]:
-            label = "Pomodoro" if mode == "pomodoro" else "Short Break" if mode == "shortBreak" else "Long Break"
-            btn = tk.Button(mode_frame, text=label, font=("Segoe UI", 9), bg="#2a2a3e", fg="#fff", relief="flat", cursor="hand2",
-                           command=lambda m=mode: self._set_mode(m))
-            btn.pack(side="left", padx=3)
-            self.mode_buttons[mode] = btn
+            bw, bh = pill_w[mode], 26
+            c = tk.Canvas(mode_frame, width=bw, height=bh,
+                          highlightthickness=0, bd=0, cursor="hand2", bg=CARD)
+            c.pack(side="left", padx=3)
+            self.mode_buttons[mode] = c
+            c.bind("<Button-1>", lambda e, m=mode: self._set_mode(m))
+            c.bind("<Enter>",    lambda e, m=mode: self._pill_hover(m, True))
+            c.bind("<Leave>",    lambda e, m=mode: self._pill_hover(m, False))
 
-        # Progress ring (canvas)
-        self.canvas = tk.Canvas(self.root, width=180, height=180, bg="#1a1a2e", highlightthickness=0)
+        # ── Progress ring canvas ───────────────────────────────────────
+        self.canvas = tk.Canvas(card, width=180, height=180,
+                                bg=CARD, highlightthickness=0)
         self.canvas.pack(pady=(0, 5))
-
-        # Timer text - centered on canvas using place with canvas coordinates
-        self.timer_text = tk.Label(self.canvas, text="25:00", font=("Consolas", 28, "bold"), bg="#1a1a2e", fg="#ff6b6b")
+        self.timer_text = tk.Label(self.canvas, text="25:00",
+                                   font=("Consolas", 28, "bold"),
+                                   bg=CARD, fg="#ff6b6b")
         self.timer_text.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Controls
-        ctrl_frame = tk.Frame(self.root, bg="#1a1a2e")
-        ctrl_frame.pack(pady=(10, 5))
+        # ── Buttons with hover (feature 5) ────────────────────────────
+        ctrl_frame = tk.Frame(card, bg=CARD)
+        ctrl_frame.pack(pady=(8, 5))
 
-        self.reset_btn = tk.Button(ctrl_frame, text="Reset", font=("Segoe UI", 12, "bold"), bg="#ff6b6b", fg="white", relief="flat", cursor="hand2", width=10, command=self._reset)
-        self.reset_btn.pack(side="right", padx=5)
+        self.reset_btn = tk.Button(ctrl_frame, text="Reset",
+                                   font=("Segoe UI", 12, "bold"),
+                                   bg="#ff6b6b", fg="white", relief="flat",
+                                   cursor="hand2", width=10, command=self._reset)
+        self.reset_btn.pack(side="left", padx=5)
+        self._add_hover(self.reset_btn, "#ff6b6b")
 
-        self.start_btn = tk.Button(ctrl_frame, text="Start", font=("Segoe UI", 12, "bold"), bg="#4ecdc4", fg="#1a1a2e", relief="flat", cursor="hand2", width=10, command=self._start)
-        self.start_btn.pack(side="right", padx=5)
+        self.start_btn = tk.Button(ctrl_frame, text="Start",
+                                   font=("Segoe UI", 12, "bold"),
+                                   bg="#3498db", fg="white", relief="flat",
+                                   cursor="hand2", width=10, command=self._start)
+        self.start_btn.pack(side="left", padx=5)
+        self._add_hover(self.start_btn, "#3498db")
 
-        self.pause_btn = tk.Button(ctrl_frame, text="Pause", font=("Segoe UI", 12, "bold"), bg="#ffd93d", fg="#1a1a2e", relief="flat", cursor="hand2", width=10, command=self._pause)
+        self.pause_btn = tk.Button(ctrl_frame, text="Pause",
+                                   font=("Segoe UI", 12, "bold"),
+                                   bg="#f39c12", fg="white", relief="flat",
+                                   cursor="hand2", width=10, command=self._pause)
         self.pause_btn.pack_forget()
+        self._add_hover(self.pause_btn, "#f39c12")
 
-        # Session info
-        self.session_label = tk.Label(self.root, text="Pomodoro Session", font=("Segoe UI", 10), bg="#1a1a2e", fg="#aaa")
+        # ── Session info ───────────────────────────────────────────────
+        self.session_label = tk.Label(card, text="Pomodoro Session",
+                                      font=("Segoe UI", 10),
+                                      bg=CARD, fg="#374f62")
         self.session_label.pack(pady=(5, 2))
-
-        self.completed_label = tk.Label(self.root, text="Completed: 0 sessions 🍅", font=("Segoe UI", 9), bg="#1a1a2e", fg="#777")
+        self.completed_label = tk.Label(card, text="Completed: 0 sessions 🍅",
+                                        font=("Segoe UI", 9),
+                                        bg=CARD, fg="#374f62")
         self.completed_label.pack()
 
-        # Click outside settings to close
+        # Draw initial pills
+        self._update_mode_buttons()
+
+        # Click outside to close settings
         self.root.bind("<Button-1>", self._on_click_outside)
 
     def _on_click_outside(self, event):
-        if hasattr(self, 'settings_frame') and self.settings_frame.winfo_viewable():
-            if event.widget not in [self.settings_frame, self.settings_btn] and not self._is_child_of(event.widget, self.settings_frame):
+        if getattr(self, '_settings_visible', False) and self.settings_frame.winfo_viewable():
+            if not self._is_child_of(event.widget, self.settings_frame):
+                try:
+                    rx = event.x_root - self.root.winfo_rootx()
+                    ry = event.y_root - self.root.winfo_rooty()
+                    if abs(rx - 28) < 16 and abs(ry - 28) < 16:
+                        return
+                except Exception:
+                    pass
                 self._close_settings()
 
     def _is_child_of(self, widget, parent):
@@ -281,17 +535,14 @@ class PomodoroApp:
         return False
 
     def _toggle_settings(self, event=None):
-        if self.settings_frame.winfo_viewable():
+        if getattr(self, '_settings_visible', False):
             self._close_settings()
         else:
-            self.settings_frame.pack(fill="x", padx=10, pady=(0, 10), before=self.title_label)
-            # Expand window height to fit settings
-            self.root.geometry("370x600")
+            self._slide_in_settings()
 
     def _close_settings(self):
-        self.settings_frame.pack_forget()
         self.s_err.pack_forget()
-        self.root.geometry("370x480")
+        self._slide_out_settings()
 
     def _apply_settings(self):
         try:
@@ -312,143 +563,124 @@ class PomodoroApp:
 
     def _toggle_overlay(self):
         if self.overlay_visible:
-            self._hide_overlay()
+            self._overlay_hide_safe()
         else:
             self._show_overlay()
 
     def _show_overlay(self):
         if self.overlay_visible:
             return
+        _log("Showing overlay...")
         self.overlay_visible = True
         self.overlay_toggle_btn.config(text="Hide Overlay")
 
-        # Create overlay in a separate thread (can't have two Tk() in same thread)
+        # If overlay window already exists, just show it
+        if hasattr(self, 'overlay_win') and self.overlay_win is not None:
+            try:
+                if self.overlay_win.winfo_exists():
+                    self.overlay_win.deiconify()
+                    self.overlay_win.attributes("-topmost", True)
+                    # Restart the update loop
+                    try:
+                        self._update_overlay()
+                    except:
+                        pass
+                    return
+            except:
+                pass
+
         def create_overlay():
-            import tkinter as tk
-            self.overlay_win = tk.Tk()
-            self.overlay_win.title("")
-            self.overlay_win.overrideredirect(True)
-            self.overlay_win.attributes("-topmost", True)
-            self.overlay_win.configure(bg="#1a1a2e")
-            self.overlay_win.resizable(False, False)
+            try:
+                import tkinter as tk
+                self.overlay_win = tk.Tk()
+                self.overlay_win.title("")
+                self.overlay_win.overrideredirect(True)
+                self.overlay_win.attributes("-topmost", True)
+                self.overlay_win.configure(bg="#1a1a2e")
+                self.overlay_win.resizable(False, False)
+                self.overlay_win.update_idletasks()
 
-            # Position bottom-right of screen, smaller and shifted right
-            sw = self.overlay_win.winfo_screenwidth()
-            sh = self.overlay_win.winfo_screenheight()
-            self.overlay_win.geometry(f"100x45+{sw-105}+{sh-80}")
+                sw = self.overlay_win.winfo_screenwidth()
+                sh = self.overlay_win.winfo_screenheight()
+                self.overlay_win.geometry(f"75x45+{sw-75}+{sh-78}")
 
-            # Overlay widgets — compact layout
-            top_frame = tk.Frame(self.overlay_win, bg="#1a1a2e")
-            top_frame.pack(fill="x", padx=4, pady=(2, 0))
-            self.overlay_session = tk.Label(top_frame, text="WORK", font=("Segoe UI", 7, "bold"), bg="#1a1a2e", fg="#ff6b6b")
-            self.overlay_session.pack(side="left")
-            self.overlay_time = tk.Label(self.overlay_win, text="25:00", font=("Consolas", 14, "bold"), bg="#1a1a2e", fg="#ff6b6b")
-            self.overlay_time.pack(pady=(0, 2))
+                top_frame = tk.Frame(self.overlay_win, bg="#1a1a2e")
+                top_frame.pack(fill="x", padx=3, pady=(2, 0))
+                self.overlay_session = tk.Label(top_frame, text="Work", font=("Segoe UI", 8, "bold"), bg="#1a1a2e", fg="#ff6b6b")
+                self.overlay_session.pack(expand=True)
+                self.overlay_time = tk.Label(self.overlay_win, text="25:00", font=("Consolas", 14, "bold"), bg="#1a1a2e", fg="#ff6b6b")
+                self.overlay_time.pack(pady=(0, 2))
 
-            # Drag support
-            drag = {"x": 0, "y": 0}
-            def start_drag(e):
-                drag["x"] = e.x; drag["y"] = e.y
-            def do_drag(e):
-                self.overlay_win.geometry(f"+{self.overlay_win.winfo_x()+e.x-drag['x']}+{self.overlay_win.winfo_y()+e.y-drag['y']}")
-            for w in [self.overlay_win, self.overlay_session, self.overlay_time]:
-                w.bind("<Button-1>", start_drag)
-                w.bind("<B1-Motion>", do_drag)
+                drag = {"x": 0, "y": 0}
+                def start_drag(e):
+                    drag["x"] = e.x; drag["y"] = e.y
+                def do_drag(e):
+                    self.overlay_win.geometry(f"+{self.overlay_win.winfo_x()+e.x-drag['x']}+{self.overlay_win.winfo_y()+e.y-drag['y']}")
+                for w in [self.overlay_win, self.overlay_session, self.overlay_time]:
+                    w.bind("<Button-1>", start_drag)
+                    w.bind("<B1-Motion>", do_drag)
 
-            # Right-click menu (same as system tray)
-            self.overlay_menu = tk.Menu(self.overlay_win, tearoff=0, bg="#1a1a2e", fg="#ffffff",
-                                         activebackground="#ff6b6b", activeforeground="#ffffff")
-            self.overlay_menu.add_command(label="Show Timer", command=self._show_timer_from_overlay)
-            self.overlay_menu.add_separator()
-            self.overlay_menu.add_command(label="Start", command=self._overlay_start_safe)
-            self.overlay_menu.add_command(label="Pause", command=self._overlay_pause_safe)
-            self.overlay_menu.add_command(label="Reset", command=self._overlay_reset_safe)
-            self.overlay_menu.add_separator()
-            self.overlay_menu.add_command(label="Hide Overlay", command=self._overlay_hide_safe)
-            self.overlay_menu.add_separator()
-            self.overlay_menu.add_command(label="Quit", command=self._overlay_quit_safe)
+                # Local menu commands
+                def overlay_show_timer():
+                    self.root.after(0, lambda: (self.root.deiconify(), self.root.lift()))
+                def overlay_start():
+                    self.root.after(0, self._start)
+                def overlay_pause():
+                    self.root.after(0, self._pause)
+                def overlay_reset():
+                    self.root.after(0, self._reset)
+                def overlay_hide():
+                    self.overlay_win.after(0, self._hide_overlay)
+                def overlay_quit():
+                    self.overlay_win.after(0, self.overlay_win.destroy)
+                    self.root.after(0, lambda: self._on_close(from_tray=True))
+                def overlay_popup(event):
+                    self.overlay_menu.tk_popup(event.x_root, event.y_root)
+                    self.overlay_menu.grab_release()
 
-            for w in [self.overlay_win, self.overlay_session, self.overlay_time]:
-                w.bind("<Button-3>", self._show_overlay_menu)
+                self.overlay_menu = tk.Menu(self.overlay_win, tearoff=0, bg="#1a1a2e", fg="#ffffff",
+                                             activebackground="#ff6b6b", activeforeground="#ffffff")
+                self.overlay_menu.add_command(label="Show Timer", command=overlay_show_timer)
+                self.overlay_menu.add_separator()
+                self.overlay_menu.add_command(label="Start", command=overlay_start)
+                self.overlay_menu.add_command(label="Pause", command=overlay_pause)
+                self.overlay_menu.add_command(label="Reset", command=overlay_reset)
+                self.overlay_menu.add_separator()
+                self.overlay_menu.add_command(label="Hide Overlay", command=overlay_hide)
+                self.overlay_menu.add_separator()
+                self.overlay_menu.add_command(label="Quit", command=overlay_quit)
 
-            # Start overlay update loop
-            self._update_overlay()
-            self.overlay_win.mainloop()
+                for w in [self.overlay_win, self.overlay_session, self.overlay_time]:
+                    w.bind("<Button-3>", overlay_popup)
 
-        t = threading.Thread(target=create_overlay, daemon=True)
-        t.start()
+                _log("Overlay entering mainloop")
+                self._update_overlay()
+                self.overlay_win.mainloop()
+                _log("Overlay mainloop ended")
+            except Exception as e:
+                _log_error(f"Overlay creation failed: {e}")
+
+        self._overlay_thread = threading.Thread(target=create_overlay, daemon=True)
+        self._overlay_thread.start()
+        _log("Overlay thread started")
 
     def _overlay_hide_safe(self):
-        """Called from overlay thread to safely hide overlay.
-        Schedules the destroy on the overlay thread itself."""
         try:
             if hasattr(self, 'overlay_win') and self.overlay_win is not None:
-                self.overlay_win.after(0, self._destroy_overlay)
+                self.overlay_win.after(0, self._hide_overlay)
         except:
             pass
 
-    def _overlay_start_safe(self):
-        """Called from overlay thread to start timer."""
-        try:
-            self.root.after(0, self._start)
-        except:
-            pass
-
-    def _overlay_pause_safe(self):
-        """Called from overlay thread to pause timer."""
-        try:
-            self.root.after(0, self._pause)
-        except:
-            pass
-
-    def _overlay_reset_safe(self):
-        """Called from overlay thread to reset timer."""
-        try:
-            self.root.after(0, self._reset)
-        except:
-            pass
-
-    def _destroy_overlay(self):
-        """Run inside overlay thread to safely close the overlay window."""
+    def _hide_overlay(self):
         try:
             if hasattr(self, 'overlay_win') and self.overlay_win is not None:
-                self.overlay_win.destroy()
+                if self.overlay_win.winfo_exists():
+                    self.overlay_win.withdraw()
+            self.overlay_visible = False
+            if hasattr(self, 'overlay_toggle_btn'):
+                self.overlay_toggle_btn.config(text="Show Overlay")
         except:
             pass
-        # Notify main thread to update state
-        try:
-            self.root.after(0, self._finish_hide_overlay)
-        except:
-            pass
-
-    def _finish_hide_overlay(self):
-        """Update UI state after overlay is destroyed."""
-        self.overlay_visible = False
-        if hasattr(self, 'overlay_toggle_btn'):
-            self.overlay_toggle_btn.config(text="Show Overlay")
-        self.overlay_win = None
-
-    def _overlay_quit_safe(self):
-        """Called from overlay thread to safely quit the whole app."""
-        try:
-            if hasattr(self, 'overlay_win') and self.overlay_win is not None:
-                self.overlay_win.after(0, self.overlay_win.destroy)
-        except:
-            pass
-        try:
-            self.root.after(0, lambda: self._on_close(from_tray=True))
-        except:
-            pass
-
-    def _show_overlay_menu(self, event):
-        try:
-            self.overlay_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self.overlay_menu.grab_release()
-
-    def _show_timer_from_overlay(self):
-        self.root.deiconify()
-        self.root.lift()
 
     def _update_overlay(self):
         if not self.overlay_visible or not hasattr(self, 'overlay_win'):
@@ -460,15 +692,16 @@ class PomodoroApp:
             s = self.time_left % 60
             self.overlay_time.config(text=f"{m:02d}:{s:02d}")
             c = self.COLORS[self.mode]
-            label = self.LABELS[self.mode]
+            label = self.OVERLAY_LABELS[self.mode]
             self.overlay_session.config(text=label, fg=c)
             self.overlay_time.config(fg=c)
         except:
             pass
-        try:
-            self.overlay_win.after(1000, self._update_overlay)
-        except:
-            pass
+        if self.overlay_visible:
+            try:
+                self._overlay_after_id = self.overlay_win.after(1000, self._update_overlay)
+            except:
+                pass
 
     def _set_mode(self, mode):
         if self.running:
@@ -480,17 +713,15 @@ class PomodoroApp:
         self._update_label()
 
     def _update_mode_buttons(self):
-        for m, btn in self.mode_buttons.items():
-            if m == self.mode:
-                btn.config(bg=self.COLORS[m])
-            else:
-                btn.config(bg="#2a2a3e")
+        for mode in self.mode_buttons:
+            self._redraw_pill(mode)
 
     def _start(self):
         self.running = True
         self.start_btn.pack_forget()
         self.pause_btn.pack(side="left", padx=5)
         _play_async(START_CHIME)
+        self._start_pulse()
         self._tick()
 
     def _pause(self):
@@ -498,83 +729,94 @@ class PomodoroApp:
         if self.timer_id:
             self.root.after_cancel(self.timer_id)
             self.timer_id = None
-        self.pause_btn.pack_forget()
+        self._stop_pulse()
+        self._update_progress()
         self.start_btn.pack(side="left", padx=5)
+        self.pause_btn.pack_forget()
 
     def _reset(self):
-        self._pause()
+        self.running = False
+        if self.timer_id:
+            self.root.after_cancel(self.timer_id)
+            self.timer_id = None
+        self._stop_pulse()
         self.time_left = self.durations[self.mode] * 60
         self.total_time = self.time_left
         self._update_display()
         self._update_progress()
+        self._update_color()
+        self._update_label()
+        self._update_mode_buttons()
+        self.start_btn.pack(side="left", padx=5)
+        self.pause_btn.pack_forget()
 
     def _tick(self):
         if not self.running:
             return
-        if self.time_left > 0:
-            self.time_left -= 1
-            self._update_display()
-            self._update_progress()
-            if self.time_left <= 3 and self.time_left > 0:
-                _play_async(TICK_CHIME)
-            self.timer_id = self.root.after(1000, self._tick)
-        else:
+        self.time_left -= 1
+        self._update_display()
+        self._update_progress()
+        if self.time_left <= 0:
             self._complete()
+        else:
+            self.timer_id = self.root.after(1000, self._tick)
 
     def _complete(self):
         self._pause()
         _play_async(DONE_CHIME if self.mode == "pomodoro" else BREAK_CHIME)
-        
+        _notify("Pomodoro Complete!" if self.mode == "pomodoro" else "Break Over!", "Time for a break!" if self.mode == "pomodoro" else "Back to work!")
+
         if self.mode == "pomodoro":
             self.completed += 1
             self.completed_label.config(text=f"Completed: {self.completed} sessions 🍅")
-            _notify("Pomodoro Complete!", f"{self.completed} done. Time for a break!")
-            # After pomodoro → always go to break (short or long)
-            nxt = "longBreak" if self.completed % self.goal == 0 else "shortBreak"
+            if self.completed % self.goal == 0:
+                nxt = "longBreak"
+            else:
+                nxt = "shortBreak"
         else:
-            _notify("Break Over", "Focus time! You got this!")
-            # After long break → cycle complete, stop and wait for user
-            if self.mode == "longBreak":
-                self._set_mode("pomodoro")
-                return  # Don't auto-start, wait for user
-            # After short break → auto-start next pomodoro
             nxt = "pomodoro"
 
         self._set_mode(nxt)
-        # Auto-start next timer (break or pomodoro in middle of cycle)
-        self.root.after(1000, self._start)
+        # Auto-start break after pomodoro, but not auto-start pomodoro after break
+        if self.mode != "pomodoro":
+            self.root.after(1000, self._start)
 
     def _update_display(self):
-        m = self.time_left // 60
-        s = self.time_left % 60
+        m, s = divmod(self.time_left, 60)
         self.timer_text.config(text=f"{m:02d}:{s:02d}")
 
     def _update_progress(self):
         p = self.total_time > 0 and (self.total_time - self.time_left) / self.total_time or 0
         self.canvas.delete("all")
-        cx, cy, r = 90, 90, 70
-        color = self.COLORS[self.mode]
-        self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#2a2a3e", width=6)
-        if p > 0:
-            extent = 360 * p
-            self.canvas.create_arc(cx-r, cy-r, cx+r, cy+r, start=90, extent=-extent, style="arc", outline=color, width=6)
+        cx, cy, r = 90, 90, 75
+        self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#b8d4e3", width=6)
+        extent = p * 359.99
+        base_c = self.COLORS[self.mode]
+        pv = getattr(self, '_pulse_val', 0.0)
+        if self.running and pv > 0:
+            arc_c = self._blend(base_c, self._lighten(base_c, 1.45), pv)
+            arc_w = 6 + int(pv * 2.5)
+        else:
+            arc_c = base_c; arc_w = 6
+        self.canvas.create_arc(cx-r, cy-r, cx+r, cy+r, start=90, extent=-extent,
+                               outline=arc_c, width=arc_w, style="arc")
 
     def _update_color(self):
         c = self.COLORS[self.mode]
-        self.title_label.config(fg=c)
         self.timer_text.config(fg=c)
-        self._update_mode_buttons()
+        self.title_label.config(fg=c)
+        if hasattr(self, '_card_frame'):
+            self._card_frame.config(highlightbackground=c)
 
     def _update_label(self):
         self.session_label.config(text=self.LABELS[self.mode])
 
     def _start_tray(self):
+        _log("Starting system tray...")
         def run_tray():
             try:
                 import pystray
                 from PIL import Image
-
-                # Load icon from resource
                 if getattr(sys, 'frozen', False):
                     base = sys._MEIPASS
                 else:
@@ -587,19 +829,14 @@ class PomodoroApp:
 
                 def show_window():
                     self.root.after(0, lambda: (self.root.deiconify(), self.root.lift()))
-
                 def start_timer():
                     self.root.after(0, self._start)
-
                 def pause_timer():
                     self.root.after(0, self._pause)
-
                 def reset_timer():
                     self.root.after(0, self._reset)
-
                 def show_overlay():
                     self.root.after(0, self._show_overlay)
-
                 def quit_app():
                     self.root.after(0, lambda: self._on_close(from_tray=True))
 
@@ -615,6 +852,8 @@ class PomodoroApp:
                     pystray.MenuItem("Quit", quit_app),
                 ))
 
+                _log("System tray icon created successfully")
+
                 def tooltip_loop():
                     while True:
                         try:
@@ -629,23 +868,17 @@ class PomodoroApp:
                 threading.Thread(target=tooltip_loop, daemon=True).start()
                 self._tray_icon.run()
             except Exception as e:
-                # Log errors to a file for debugging
-                with open(os.path.join(tempfile.gettempdir(), "pomodoro_tray_error.txt"), "w") as f:
-                    import traceback
-                    f.write(traceback.format_exc())
+                _log_error(f"System tray failed: {e}")
 
         threading.Thread(target=run_tray, daemon=True).start()
 
     def _on_close(self, from_tray=False):
         if from_tray:
-            # Quit completely from tray menu - stop everything
-            # Stop the tray icon
             if self._tray_icon:
                 try:
                     self._tray_icon.stop()
                 except:
                     pass
-            # Destroy overlay if visible
             if hasattr(self, 'overlay_win') and self.overlay_win is not None:
                 try:
                     if self.overlay_win.winfo_exists():
@@ -659,7 +892,6 @@ class PomodoroApp:
             import ctypes
             ctypes.windll.kernel32.ExitProcess(0)
         else:
-            # Minimize to tray — hide window but keep running
             self.root.withdraw()
 
     def run(self):
