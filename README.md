@@ -1,14 +1,15 @@
 # 🍅 Pomodoro Timer
 
-A beautiful, lightweight Pomodoro Timer desktop application built with Python and tkinter. Features a floating overlay, system tray integration, and automatic cycle management.
+A beautiful, lightweight Pomodoro Timer desktop application built with Python and tkinter. Features a floating overlay, system tray integration, automatic cycle management, and customizable background.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue?logo=python)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## 📸 Screenshot
 
-- Dark theme with glass-morphism UI
-- Circular progress ring with color-coded modes
+- Light blue theme with rounded card UI
+- Pill-shaped mode buttons with hover effects
+- Circular progress ring with pulse animation
 - Floating overlay window (always on top)
 - System tray integration with live timer tooltip
 
@@ -24,10 +25,14 @@ No installation required — just download and run!
 - **Auto Cycle** — Automatically runs through 4 pomodoros: 25>5>25>5>25>5>25>15
 - **Floating Overlay** — Compact always-on-top timer window, drag to reposition
 - **System Tray** — Minimize to tray, right-click for quick controls
-- **Sound Effects** — Audio notifications for start, tick, break, and completion
+- **Sound Effects** — Audio notifications for start, break, and completion
 - **Desktop Notifications** — Windows toast notifications
 - **Customizable Durations** — Adjust pomodoro, break, and cycle settings
 - **Session Tracking** — Count completed pomodoro sessions
+- **Background Image** — Supports custom background.png
+- **Pill-shaped Mode Buttons** — With hover effects and active state highlighting
+- **Pulse Animation** — Progress ring pulses while timer is running
+- **Slide-in Settings** — Smooth animated settings panel
 
 ## 🎮 Usage
 
@@ -56,6 +61,13 @@ Click ⚙ to customize:
 - Long break duration (1-120 min)
 - Cycles before long break (1-20)
 
+### Overlay Right-Click Menu
+
+- Show Timer — restore main window
+- Start / Pause / Reset — quick timer controls
+- Hide Overlay — hide the floating overlay
+- Quit — exit completely
+
 ## 🔧 Build from Source
 
 ```bash
@@ -64,26 +76,27 @@ git clone https://github.com/CY-0214/pomodoro-timer.git
 cd pomodoro-timer
 
 # Install dependencies
-pip install pystray Pillow plyer
+pip install pystray Pillow plyer pyinstaller
 
 # Run directly
 python pomodoro_timer.py
 
 # Build EXE
-pip install pyinstaller
-pyinstaller --onefile --windowed --add-data "icon_256.png;." --icon=tomato_icon.ico pomodoro_timer.py
+pyinstaller PomodoroTimer.spec
 ```
 
 ## 📁 Project Structure
 
 ```
 pomodoro-timer/
-├── pomodoro_timer.py    # Main application
-├── tomato_icon.ico      # Application icon
-├── icon_256.png         # Taskbar icon
-├── Start Pomodoro.bat   # Launcher (alternative)
-├── README.md            # This file
-└── LICENSE              # MIT License
+├── pomodoro_timer.py      # Main application
+├── PomodoroTimer.spec     # PyInstaller build spec
+├── tomato_icon.ico        # Application icon (EXE file icon)
+├── icon_256.png           # Taskbar + tray icon
+├── background.png         # Window background image (optional)
+├── CHANGELOG.md           # Version history
+├── README.md              # This file
+└── LICENSE                # MIT License
 ```
 
 ## 📝 License
@@ -104,7 +117,7 @@ On the warning screen, click **"More info"** then **"Run anyway"**. This only ap
 Run this command in **PowerShell as Administrator**:
 
 ```powershell
-Add-MpPreference -ExclusionPath "D:\Lim CY\Downloads\cc test\dist9\PomodoroTimer.exe"
+Add-MpPreference -ExclusionPath "C:\Path\To\Your\PomodoroTimer.exe"
 ```
 
 Replace the path with wherever you saved the EXE. After this, no more warnings.
