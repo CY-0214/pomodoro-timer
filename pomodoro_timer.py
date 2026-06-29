@@ -209,18 +209,18 @@ class PomodoroApp:
 
     def _set_taskbar_icon(self):
         try:
+            import ctypes
+            # Set explicit app ID so Windows uses our icon for taskbar
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PomodoroTimer.CY0214.2.0")
             if getattr(sys, 'frozen', False):
-                base = sys._MEIPASS
+                # Use the embedded icon from the exe itself
+                self.root.iconbitmap(default=sys.executable)
             else:
-                base = os.path.dirname(os.path.abspath(__file__))
-            icon_path = os.path.join(base, "icon_256.png")
-            if os.path.exists(icon_path):
-                img = Image.open(icon_path)
-                photo = ImageTk.PhotoImage(img)
-                self.root.iconphoto(True, photo)
-                self._icon_photo = photo
-        except:
-            pass
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cinnamoroll_icon.ico")
+                if os.path.exists(icon_path):
+                    self.root.iconbitmap(default=icon_path)
+        except Exception as e:
+            _log_error(f"Icon load failed: {e}")
 
 
     # ─── Colour helpers ────────────────────────────────────────────────
@@ -821,7 +821,7 @@ class PomodoroApp:
                     base = sys._MEIPASS
                 else:
                     base = os.path.dirname(os.path.abspath(__file__))
-                icon_path = os.path.join(base, "icon_256.png")
+                icon_path = os.path.join(base, "pomodoro_timer_icon.png")
                 if os.path.exists(icon_path):
                     img = Image.open(icon_path).resize((64, 64), Image.LANCZOS)
                 else:

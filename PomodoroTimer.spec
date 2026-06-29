@@ -3,8 +3,13 @@ a = Analysis(
     ['pomodoro_timer.py'],
     pathex=[],
     binaries=[],
-    datas=[('icon_256.png', '.'), ('tomato_icon.ico', '.')],
-    hiddenimports=['tkinter', 'pystray', 'plyer', 'PIL', 'PIL.ImageTk'],
+    datas=[('pomodoro_timer_icon.png', '.'), ('background.png', '.')],
+    hiddenimports=[
+        'tkinter',
+        'pystray',
+        'plyer',
+        'PIL',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -31,5 +36,5 @@ exe = EXE(
     target_arch=None,
     codesigning_identity=None,
     entitlements_file=None,
-    icon='tomato_icon.ico',
+    icon='cinnamoroll_icon.ico',
 )
